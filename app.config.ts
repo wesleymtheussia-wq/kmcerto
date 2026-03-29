@@ -2,23 +2,8 @@
 import "./scripts/load-env.js";
 import type { ExpoConfig } from "expo/config";
 
-// Bundle ID format: space.manus.<project_name_dots>.<timestamp>
-const rawBundleId = "space.manus.kmcerto.mobile.t20260328222929";
-const bundleId =
-  rawBundleId
-    .replace(/[-_]/g, ".") // Replace hyphens/underscores with dots
-    .replace(/[^a-zA-Z0-9.]/g, "") // Remove invalid chars
-    .replace(/\.+/g, ".") // Collapse consecutive dots
-    .replace(/^\.+|\.+$/g, "") // Trim leading/trailing dots
-    .toLowerCase()
-    .split(".")
-    .map((segment) => {
-      return /^[a-zA-Z]/.test(segment) ? segment : "x" + segment;
-    })
-    .join(".") || "space.manus.app";
-
-const timestamp = bundleId.split(".").pop()?.replace(/^t/, "") ?? "";
-const schemeFromBundleId = `manus${timestamp}`;
+const bundleId = "com.kmcerto.app";
+const schemeFromBundleId = "kmcerto";
 
 const env = {
   appName: "KmCerto",
@@ -42,9 +27,9 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
-    "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+    },
   },
   android: {
     adaptiveIcon: {
@@ -81,7 +66,7 @@ const config: ExpoConfig = {
     [
       "expo-audio",
       {
-        microphonePermission: "Allow $(PRODUCT_NAME ) to access your microphone.",
+        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
       },
     ],
     [
@@ -120,9 +105,9 @@ const config: ExpoConfig = {
   },
   extra: {
     eas: {
-      projectId: "6381002f-db2e-41ca-845e-6bf63b6d5e8d"
-    }
-  }
+      projectId: "6381002f-db2e-41ca-845e-6bf63b6d5e8d",
+    },
+  },
 };
 
 export default config;
