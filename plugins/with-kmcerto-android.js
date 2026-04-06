@@ -7,7 +7,7 @@ const withKmCertoManifest = (config) => {
     let androidManifest = cfg.modResults.manifest;
     const mainApplication = androidManifest.application[0];
 
-    // Adicionar permissões necessárias (inclui FOREGROUND_SERVICE_MEDIA_PROJECTION para captura de tela)
+    // Adicionar permissões necessárias
     const permissions = [
       "android.permission.SYSTEM_ALERT_WINDOW",
       "android.permission.FOREGROUND_SERVICE",
@@ -35,14 +35,14 @@ const withKmCertoManifest = (config) => {
       mainApplication.service = [];
     }
 
-    // Adicionar KmCertoAccessibilityService (com suporte a mediaProjection para OCR no Android 14+)
+    // 1. Serviço de Acessibilidade (Apenas specialUse)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoAccessibilityService",
         "android:permission": "android.permission.BIND_ACCESSIBILITY_SERVICE",
         "android:exported": "true",
         "android:label": "KmCerto",
-        "android:foregroundServiceType": "specialUse|mediaProjection",
+        "android:foregroundServiceType": "specialUse",
       },
       "intent-filter": [
         {
@@ -67,7 +67,16 @@ const withKmCertoManifest = (config) => {
       ],
     });
 
-    // Adicionar KmCertoOverlayService
+    // 2. NOVO: Serviço dedicado para Captura de Tela (Apenas mediaProjection)
+    mainApplication.service.push({
+      $: {
+        "android:name": "expo.modules.kmcertonative.KmCertoScreenCaptureService",
+        "android:exported": "false",
+        "android:foregroundServiceType": "mediaProjection",
+      }
+    });
+
+    // 3. Overlay Service (Apenas specialUse)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoOverlayService",
@@ -84,7 +93,7 @@ const withKmCertoManifest = (config) => {
       ],
     });
 
-    // Adicionar KmCertoFloatingBubbleService
+    // 4. Floating Bubble Service (Apenas specialUse)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoFloatingBubbleService",
@@ -127,11 +136,9 @@ const withKmCertoResources = (config) => {
       const projectRoot = cfg.modRequest.projectRoot;
       const resDir = path.join(projectRoot, "android/app/src/main/res");
 
-      // Criar diretório xml se não existir
       const xmlDir = path.join(resDir, "xml");
       if (!fs.existsSync(xmlDir)) fs.mkdirSync(xmlDir, { recursive: true });
 
-      // Escrever configuração do Accessibility Service
       const accessibilityConfig = `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
@@ -143,7 +150,6 @@ const withKmCertoResources = (config) => {
 
       fs.writeFileSync(path.join(xmlDir, "kmcerto_accessibility_service_config.xml"), accessibilityConfig);
 
-      // Escrever strings necessárias
       const valuesDir = path.join(resDir, "values");
       if (!fs.existsSync(valuesDir)) fs.mkdirSync(valuesDir, { recursive: true });
 
