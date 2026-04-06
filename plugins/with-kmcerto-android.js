@@ -26,7 +26,7 @@ const withKmCertoManifest = (config) => {
       }
     });
 
-    // Limpar serviços antigos para evitar duplicidade
+    // Limpar serviços KmCerto antigos para evitar duplicidade
     if (mainApplication.service) {
       mainApplication.service = mainApplication.service.filter(
         (s) => s.$ && s.$["android:name"] && !s.$["android:name"].includes("KmCerto")
@@ -35,7 +35,7 @@ const withKmCertoManifest = (config) => {
       mainApplication.service = [];
     }
 
-    // 1. Serviço de Acessibilidade (Apenas specialUse)
+    // 1. Serviço de Acessibilidade (specialUse)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoAccessibilityService",
@@ -67,16 +67,16 @@ const withKmCertoManifest = (config) => {
       ],
     });
 
-    // 2. NOVO: Serviço dedicado para Captura de Tela (Apenas mediaProjection)
+    // 2. Serviço DEDICADO para Captura de Tela (mediaProjection)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoScreenCaptureService",
         "android:exported": "false",
         "android:foregroundServiceType": "mediaProjection",
-      }
+      },
     });
 
-    // 3. Overlay Service (Apenas specialUse)
+    // 3. Overlay Service (specialUse)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoOverlayService",
@@ -93,7 +93,7 @@ const withKmCertoManifest = (config) => {
       ],
     });
 
-    // 4. Floating Bubble Service (Apenas specialUse)
+    // 4. Floating Bubble Service (specialUse)
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoFloatingBubbleService",
