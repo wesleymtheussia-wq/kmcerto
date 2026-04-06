@@ -128,7 +128,8 @@ class KmCertoNativeModule : Module() {
     }
 
     AsyncFunction("hasScreenCapturePermission") {
-      KmCertoScreenCapture.hasPermission()
+      val context = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoScreenCapture.hasPermission(context)
     }
 
     AsyncFunction("requestScreenCapturePermission") {
@@ -212,6 +213,7 @@ object KmCertoRuntime {
   private const val PREFERENCES_NAME = "kmcerto_native_preferences"
   private const val KEY_MINIMUM_PER_KM = "minimum_per_km"
   private const val KEY_MONITORING_ENABLED = "monitoring_enabled"
+  private const val KEY_SCREEN_CAPTURE_GRANTED = "screen_capture_granted"
 
   val supportedPackages: Map<String, String> = mapOf(
     "br.com.ifood.driver.app" to "iFood",
@@ -242,6 +244,18 @@ object KmCertoRuntime {
   fun isMonitoringEnabled(context: Context): Boolean {
     return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
       .getBoolean(KEY_MONITORING_ENABLED, true)
+  }
+
+  fun setScreenCaptureGranted(context: Context, granted: Boolean) {
+    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .putBoolean(KEY_SCREEN_CAPTURE_GRANTED, granted)
+      .apply()
+  }
+
+  fun isScreenCaptureGranted(context: Context): Boolean {
+    return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+      .getBoolean(KEY_SCREEN_CAPTURE_GRANTED, false)
   }
 
   fun supportsPackage(packageName: String): Boolean {
@@ -503,11 +517,14 @@ object KmCertoScreenCapture {
     private var imageReader: ImageReader? = null
     private var isCapturing = false
 
-    fun hasPermission(): Boolean = mediaProjection != null
+    fun hasPermission(context: Context): Boolean = mediaProjection != null || KmCertoRuntime.isScreenCaptureGranted(context)
 
     fun setPermissionResult(resultCode: Int, data: Intent, context: Context) {
         val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = mpManager.getMediaProjection(resultCode, data)
+        if (mediaProjection != null) {
+            KmCertoRuntime.setScreenCaptureGranted(context, true)
+        }
     }
 
     fun captureAndProcess(context: Context, packageName: String) {
