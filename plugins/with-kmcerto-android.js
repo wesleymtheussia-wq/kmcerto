@@ -7,7 +7,7 @@ const withKmCertoManifest = (config) => {
     let androidManifest = cfg.modResults.manifest;
     const mainApplication = androidManifest.application[0];
 
-    // Adicionar permissões necessárias
+    // Adicionar permissões necessárias (inclui FOREGROUND_SERVICE_MEDIA_PROJECTION para captura de tela)
     const permissions = [
       "android.permission.SYSTEM_ALERT_WINDOW",
       "android.permission.FOREGROUND_SERVICE",
@@ -26,7 +26,82 @@ const withKmCertoManifest = (config) => {
       }
     });
 
-    // Adicionar KmCertoPermissionActivity (Necessária para o OCR)
+    // Limpar serviços antigos para evitar duplicidade
+    if (mainApplication.service) {
+      mainApplication.service = mainApplication.service.filter(
+        (s) => s.$ && s.$["android:name"] && !s.$["android:name"].includes("KmCerto")
+      );
+    } else {
+      mainApplication.service = [];
+    }
+
+    // Adicionar KmCertoAccessibilityService (com suporte a mediaProjection para OCR no Android 14+)
+    mainApplication.service.push({
+      $: {
+        "android:name": "expo.modules.kmcertonative.KmCertoAccessibilityService",
+        "android:permission": "android.permission.BIND_ACCESSIBILITY_SERVICE",
+        "android:exported": "true",
+        "android:label": "KmCerto",
+        "android:foregroundServiceType": "specialUse|mediaProjection",
+      },
+      "intent-filter": [
+        {
+          action: [{ $: { "android:name": "android.accessibilityservice.AccessibilityService" } }],
+        },
+      ],
+      "meta-data": [
+        {
+          $: {
+            "android:name": "android.accessibilityservice",
+            "android:resource": "@xml/kmcerto_accessibility_service_config",
+          },
+        },
+      ],
+      property: [
+        {
+          $: {
+            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
+            "android:value": "accessibility_monitoring",
+          },
+        },
+      ],
+    });
+
+    // Adicionar KmCertoOverlayService
+    mainApplication.service.push({
+      $: {
+        "android:name": "expo.modules.kmcertonative.KmCertoOverlayService",
+        "android:exported": "false",
+        "android:foregroundServiceType": "specialUse",
+      },
+      property: [
+        {
+          $: {
+            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
+            "android:value": "overlay",
+          },
+        },
+      ],
+    });
+
+    // Adicionar KmCertoFloatingBubbleService
+    mainApplication.service.push({
+      $: {
+        "android:name": "expo.modules.kmcertonative.KmCertoFloatingBubbleService",
+        "android:exported": "false",
+        "android:foregroundServiceType": "specialUse",
+      },
+      property: [
+        {
+          $: {
+            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
+            "android:value": "floating_indicator",
+          },
+        },
+      ],
+    });
+
+    // Adicionar KmCertoPermissionActivity
     if (!mainApplication.activity) mainApplication.activity = [];
     const hasPermActivity = mainApplication.activity.some(
       (a) => a.$ && a.$["android:name"] === "expo.modules.kmcertonative.KmCertoPermissionActivity"
@@ -52,9 +127,11 @@ const withKmCertoResources = (config) => {
       const projectRoot = cfg.modRequest.projectRoot;
       const resDir = path.join(projectRoot, "android/app/src/main/res");
 
+      // Criar diretório xml se não existir
       const xmlDir = path.join(resDir, "xml");
       if (!fs.existsSync(xmlDir)) fs.mkdirSync(xmlDir, { recursive: true });
 
+      // Escrever configuração do Accessibility Service
       const accessibilityConfig = `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
@@ -64,8 +141,9 @@ const withKmCertoResources = (config) => {
     android:notificationTimeout="150"
     android:description="@string/kmcerto_accessibility_description" />`;
 
-      fs.writeFileSync(path.join(xmlDir, "kmcerto_accessibility_service_config.xml" ), accessibilityConfig);
+      fs.writeFileSync(path.join(xmlDir, "kmcerto_accessibility_service_config.xml"), accessibilityConfig);
 
+      // Escrever strings necessárias
       const valuesDir = path.join(resDir, "values");
       if (!fs.existsSync(valuesDir)) fs.mkdirSync(valuesDir, { recursive: true });
 
