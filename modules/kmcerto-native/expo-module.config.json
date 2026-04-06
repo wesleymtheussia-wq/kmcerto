@@ -1,9 +1,0 @@
-{
-  "platforms": ["apple", "android", "web"],
-  "apple": {
-    "modules": ["KmCertoNativeModule"]
-  },
-  "android": {
-    "modules": ["expo.modules.kmcertonative.KmCertoNativeModule"]
-  }
-}
