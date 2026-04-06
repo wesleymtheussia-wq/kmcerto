@@ -1,24 +1,28 @@
-import { NativeModule, EventEmitter, Subscription } from 'expo-modules-core';
+import { requireNativeModule, EventEmitter, Subscription } from 'expo-modules-core';
 
-// Interface para o módulo nativo
-declare class KmCertoNativeModule extends NativeModule {
-  requestScreenCapturePermission(): Promise<boolean>;
-  isScreenCaptureEnabled(): boolean;
-}
+// Importa o módulo nativo registrado no Expo
+// O nome 'KmCertoNative' deve ser o mesmo definido no expo-module.config.json
+const KmCertoNativeModule = requireNativeModule('KmCertoNative');
 
-// Importa o módulo nativo do Expo
-import KmCertoNative from './KmCertoNativeModule';
-
-const eventEmitter = new EventEmitter(KmCertoNative);
+const eventEmitter = new EventEmitter(KmCertoNativeModule);
 
 export default {
   // Funções do módulo
-  requestScreenCapturePermission: async () => {
-    return await KmCertoNative.requestScreenCapturePermission();
+  requestScreenCapturePermission: async (): Promise<boolean> => {
+    try {
+      return await KmCertoNativeModule.requestScreenCapturePermission();
+    } catch (e) {
+      console.error("Erro ao pedir permissão de OCR:", e);
+      return false;
+    }
   },
   
-  isScreenCaptureEnabled: () => {
-    return KmCertoNative.isScreenCaptureEnabled();
+  isScreenCaptureEnabled: (): boolean => {
+    try {
+      return KmCertoNativeModule.isScreenCaptureEnabled();
+    } catch (e) {
+      return false;
+    }
   },
 
   // Gerenciamento de eventos
