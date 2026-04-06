@@ -16,6 +16,12 @@
       android:exported="false"
       android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+    <!-- Serviço DEDICADO para captura de tela (mediaProjection) -->
+    <service
+      android:name="expo.modules.kmcertonative.KmCertoScreenCaptureService"
+      android:exported="false"
+      android:foregroundServiceType="mediaProjection" />
+
     <service
       android:name="expo.modules.kmcertonative.KmCertoOverlayService"
       android:exported="false"
