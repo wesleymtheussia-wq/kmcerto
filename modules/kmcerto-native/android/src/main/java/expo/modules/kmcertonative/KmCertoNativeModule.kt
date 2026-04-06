@@ -9,6 +9,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -417,6 +418,29 @@ class KmCertoAccessibilityService : AccessibilityService() {
     
     KmCertoLogger.init(this)
     KmCertoLogger.log("Serviço de Acessibilidade Conectado")
+
+    // No Android 14+, precisamos garantir que o serviço de primeiro plano seja iniciado corretamente
+    // para permitir a captura de tela (MediaProjection)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val channelId = "kmcerto_monitoring"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "KmCerto Monitoramento", NotificationManager.IMPORTANCE_LOW)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+
+        val notification = Notification.Builder(this, channelId)
+            .setContentTitle("KmCerto Ativo")
+            .setContentText("Monitorando ofertas em tempo real")
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(1001, notification)
+        }
+    }
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent) {
