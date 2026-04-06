@@ -419,8 +419,6 @@ class KmCertoAccessibilityService : AccessibilityService() {
     KmCertoLogger.init(this)
     KmCertoLogger.log("Serviço de Acessibilidade Conectado")
 
-    // No Android 14+, precisamos garantir que o serviço de primeiro plano seja iniciado corretamente
-    // para permitir a captura de tela (MediaProjection)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         val channelId = "kmcerto_monitoring"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -436,7 +434,7 @@ class KmCertoAccessibilityService : AccessibilityService() {
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(1001, notification)
         }
@@ -452,20 +450,16 @@ class KmCertoAccessibilityService : AccessibilityService() {
     wakeLock?.acquire(10 * 60 * 1000L /*10 minutes*/)
 
     val allText = StringBuilder()
-    
-    // 1. Tentar ler de todas as janelas (Acessibilidade Profunda)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
       windows.forEach { window ->
         collectTextRecursive(window.root, allText)
       }
     }
 
-    // 2. Fallback para o root da janela ativa
     if (allText.isEmpty()) {
       collectTextRecursive(rootInActiveWindow, allText)
     }
 
-    // 3. Fallback para o texto do evento
     if (allText.isEmpty()) {
       event.text.forEach { allText.append(it).append(" ") }
     }
@@ -475,7 +469,6 @@ class KmCertoAccessibilityService : AccessibilityService() {
       processText(text, packageName)
     }
     
-    // 4. Se o texto via acessibilidade for suspeito de estar vazio (Uber/99), tentar OCR
     if (packageName.contains("uber") || packageName.contains("app99")) {
         KmCertoScreenCapture.captureAndProcess(this, packageName)
     }
@@ -490,11 +483,9 @@ class KmCertoAccessibilityService : AccessibilityService() {
     
     if (!text.isNullOrBlank()) {
       out.append(text).append(" ")
-      if (!viewId.isNullOrBlank()) KmCertoLogger.log("TEXT: $text (ID: $viewId)")
     }
     if (!contentDesc.isNullOrBlank()) {
       out.append(contentDesc).append(" ")
-      if (!viewId.isNullOrBlank()) KmCertoLogger.log("DESC: $contentDesc (ID: $viewId)")
     }
 
     for (i in 0 until node.childCount) {
@@ -508,7 +499,6 @@ class KmCertoAccessibilityService : AccessibilityService() {
     
     val offer = KmCertoOfferParser.parseFromText(text, minimumPerKm, sourceApp)
     if (offer != null) {
-      KmCertoLogger.log("OFERTA DETECTADA ($sourceApp): R$ ${offer.totalFare} | ${offer.distanceKm} km | Status: ${offer.status}")
       KmCertoOverlayService.show(this, offer)
     }
   }
@@ -535,6 +525,32 @@ class KmCertoAccessibilityService : AccessibilityService() {
   }
 }
 
+class KmCertoScreenCaptureService : Service() {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "kmcerto_capture"
+            val channel = NotificationChannel(channelId, "KmCerto Captura", NotificationManager.IMPORTANCE_LOW)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+
+            val notification = Notification.Builder(this, channelId)
+                .setContentTitle("KmCerto Captura Ativa")
+                .setContentText("Processando OCR em tempo real")
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(1002, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(1002, notification)
+            }
+        }
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
 object KmCertoScreenCapture {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -548,6 +564,13 @@ object KmCertoScreenCapture {
         mediaProjection = mpManager.getMediaProjection(resultCode, data)
         if (mediaProjection != null) {
             KmCertoRuntime.setScreenCaptureGranted(context, true)
+            // Inicia o serviço de captura para manter a permissão ativa no Android 14+
+            val serviceIntent = Intent(context, KmCertoScreenCaptureService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
         }
     }
 
@@ -600,7 +623,6 @@ object KmCertoScreenCapture {
             .addOnSuccessListener { visionText ->
                 val text = visionText.text
                 if (text.isNotBlank()) {
-                    KmCertoLogger.log("OCR_BRUTO ($packageName): ${text.replace("\n", " | ")}")
                     val minimumPerKm = KmCertoRuntime.getMinimumPerKm(context)
                     val sourceApp = KmCertoRuntime.sourceLabel(packageName)
                     val offer = KmCertoOfferParser.parseFromText(text, minimumPerKm, sourceApp)
@@ -638,7 +660,7 @@ object KmCertoLogger {
     val dir = context.getExternalFilesDir(null) ?: context.filesDir
     logFile = File(dir, "kmcerto_debug.txt")
     if (logFile?.exists() == true) {
-        if (logFile!!.length() > 1024 * 1024) logFile?.delete() // Limpa se > 1MB
+        if (logFile!!.length() > 1024 * 1024) logFile?.delete()
     }
   }
 
@@ -654,115 +676,117 @@ object KmCertoLogger {
   fun getLogPath(): String = logFile?.absolutePath ?: "N/A"
 }
 
-object KmCertoOverlayService {
-  private var overlayView: LinearLayout? = null
+class KmCertoOverlayService : Service() {
+    companion object {
+        private var overlayView: LinearLayout? = null
 
-  fun show(context: Context, data: OfferDecisionData) {
-    Handler(Looper.getMainLooper()).post {
-      try {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        stop(context)
+        fun show(context: Context, data: OfferDecisionData) {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    stop(context)
 
-        val view = LinearLayout(context).apply {
-          orientation = LinearLayout.VERTICAL
-          setPadding(40, 30, 40, 30)
-          val shape = GradientDrawable().apply {
-            setColor(Color.parseColor("#1D2026"))
-            cornerRadius = 40f
-            setStroke(4, Color.parseColor("#2D313A"))
-          }
-          background = shape
+                    val view = LinearLayout(context).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(40, 30, 40, 30)
+                        val shape = GradientDrawable().apply {
+                            setColor(Color.parseColor("#1D2026"))
+                            cornerRadius = 40f
+                            setStroke(4, Color.parseColor("#2D313A"))
+                        }
+                        background = shape
+                    }
+
+                    val header = LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    
+                    val sourceTxt = TextView(context).apply {
+                        text = data.sourceApp
+                        setTextColor(Color.parseColor("#9CA3AF"))
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                    }
+                    
+                    val statusTxt = TextView(context).apply {
+                        text = data.status
+                        setTextColor(Color.WHITE)
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setPadding(20, 5, 20, 5)
+                        val bg = GradientDrawable().apply {
+                            setColor(Color.parseColor(data.statusColor))
+                            cornerRadius = 12f
+                        }
+                        background = bg
+                    }
+                    
+                    header.addView(sourceTxt, LinearLayout.LayoutParams(0, -2, 1f))
+                    header.addView(statusTxt)
+                    view.addView(header)
+
+                    val fareTxt = TextView(context).apply {
+                        text = data.totalFareLabel
+                        setTextColor(Color.WHITE)
+                        textSize = 32f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setPadding(0, 10, 0, 10)
+                    }
+                    view.addView(fareTxt)
+
+                    val metrics = LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, 10, 0, 0)
+                    }
+                    
+                    val perKmTxt = TextView(context).apply {
+                        text = "R$ ${String.format("%.2f", data.perKm)}/km"
+                        setTextColor(Color.parseColor("#F5D400"))
+                        textSize = 16f
+                        typeface = Typeface.DEFAULT_BOLD
+                    }
+                    metrics.addView(perKmTxt)
+                    view.addView(metrics)
+
+                    val params = WindowManager.LayoutParams(
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                        PixelFormat.TRANSLUCENT
+                    ).apply {
+                        gravity = Gravity.TOP
+                        y = 100
+                        horizontalMargin = 0.05f
+                        width = (context.resources.displayMetrics.widthPixels * 0.9).toInt()
+                    }
+
+                    wm.addView(view, params)
+                    overlayView = view
+                    Handler(Looper.getMainLooper()).postDelayed({ stop(context) }, 15000)
+                } catch (e: Exception) {
+                    KmCertoLogger.log("ERRO OVERLAY: ${e.message}")
+                }
+            }
         }
 
-        // Header: App Source + Status
-        val header = LinearLayout(context).apply {
-          orientation = LinearLayout.HORIZONTAL
-          gravity = Gravity.CENTER_VERTICAL
+        fun stop(context: Context) {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    overlayView?.let {
+                        wm.removeView(it)
+                        overlayView = null
+                    }
+                } catch (_: Exception) {}
+            }
         }
-        
-        val sourceTxt = TextView(context).apply {
-          text = data.sourceApp
-          setTextColor(Color.parseColor("#9CA3AF"))
-          textSize = 12f
-          typeface = Typeface.DEFAULT_BOLD
-        }
-        
-        val statusTxt = TextView(context).apply {
-          text = data.status
-          setTextColor(Color.WHITE)
-          textSize = 12f
-          typeface = Typeface.DEFAULT_BOLD
-          setPadding(20, 5, 20, 5)
-          val bg = GradientDrawable().apply {
-            setColor(Color.parseColor(data.statusColor))
-            cornerRadius = 12f
-          }
-          background = bg
-        }
-        
-        header.addView(sourceTxt, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(statusTxt)
-        view.addView(header)
-
-        // Fare
-        val fareTxt = TextView(context).apply {
-          text = data.totalFareLabel
-          setTextColor(Color.WHITE)
-          textSize = 32f
-          typeface = Typeface.DEFAULT_BOLD
-          setPadding(0, 10, 0, 10)
-        }
-        view.addView(fareTxt)
-
-        // Metrics
-        val metrics = LinearLayout(context).apply {
-          orientation = LinearLayout.HORIZONTAL
-          setPadding(0, 10, 0, 0)
-        }
-        
-        val perKmTxt = TextView(context).apply {
-          text = "R$ ${String.format("%.2f", data.perKm)}/km"
-          setTextColor(Color.parseColor("#F5D400"))
-          textSize = 16f
-          typeface = Typeface.DEFAULT_BOLD
-        }
-        metrics.addView(perKmTxt)
-        
-        view.addView(metrics)
-
-        val params = WindowManager.LayoutParams(
-          WindowManager.LayoutParams.MATCH_PARENT,
-          WindowManager.LayoutParams.WRAP_CONTENT,
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-          PixelFormat.TRANSLUCENT
-        ).apply {
-          gravity = Gravity.TOP
-          y = 100
-          horizontalMargin = 0.05f
-          width = (context.resources.displayMetrics.widthPixels * 0.9).toInt()
-        }
-
-        wm.addView(view, params)
-        overlayView = view
-        
-        // Auto-hide after 15 seconds
-        Handler(Looper.getMainLooper()).postDelayed({ stop(context) }, 15000)
-      } catch (e: Exception) {
-        KmCertoLogger.log("ERRO OVERLAY: ${e.message}")
-      }
     }
-  }
 
-  fun stop(context: Context) {
-    Handler(Looper.getMainLooper()).post {
-      try {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        overlayView?.let {
-          wm.removeView(it)
-          overlayView = null
-        }
-      } catch (_: Exception) {}
-    }
-  }
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+class KmCertoFloatingBubbleService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
 }
