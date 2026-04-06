@@ -7,12 +7,15 @@ const withKmCertoManifest = (config) => {
     let androidManifest = cfg.modResults.manifest;
     const mainApplication = androidManifest.application[0];
 
-    // Adicionar permissões necessárias
+    // Adicionar permissões necessárias (inclui FOREGROUND_SERVICE_MEDIA_PROJECTION para captura de tela)
     const permissions = [
       "android.permission.SYSTEM_ALERT_WINDOW",
       "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
       "android.permission.WAKE_LOCK",
       "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED",
     ];
 
     if (!androidManifest["uses-permission"]) androidManifest["uses-permission"] = [];
@@ -38,6 +41,8 @@ const withKmCertoManifest = (config) => {
         "android:name": "expo.modules.kmcertonative.KmCertoAccessibilityService",
         "android:permission": "android.permission.BIND_ACCESSIBILITY_SERVICE",
         "android:exported": "true",
+        "android:label": "KmCerto",
+        "android:foregroundServiceType": "specialUse",
       },
       "intent-filter": [
         {
@@ -49,6 +54,48 @@ const withKmCertoManifest = (config) => {
           $: {
             "android:name": "android.accessibilityservice",
             "android:resource": "@xml/kmcerto_accessibility_service_config",
+          },
+        },
+      ],
+      property: [
+        {
+          $: {
+            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
+            "android:value": "accessibility_monitoring",
+          },
+        },
+      ],
+    });
+
+    // Adicionar KmCertoOverlayService
+    mainApplication.service.push({
+      $: {
+        "android:name": "expo.modules.kmcertonative.KmCertoOverlayService",
+        "android:exported": "false",
+        "android:foregroundServiceType": "specialUse",
+      },
+      property: [
+        {
+          $: {
+            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
+            "android:value": "overlay",
+          },
+        },
+      ],
+    });
+
+    // Adicionar KmCertoFloatingBubbleService
+    mainApplication.service.push({
+      $: {
+        "android:name": "expo.modules.kmcertonative.KmCertoFloatingBubbleService",
+        "android:exported": "false",
+        "android:foregroundServiceType": "specialUse",
+      },
+      property: [
+        {
+          $: {
+            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
+            "android:value": "floating_indicator",
           },
         },
       ],
