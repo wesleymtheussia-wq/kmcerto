@@ -61,6 +61,22 @@ const KmCertoNativeModule = {
       return Promise.resolve(false);
     }
   },
+  hasScreenCapturePermission: (): Promise<boolean> => {
+    if (!NativeModule) return Promise.resolve(false);
+    try {
+      return NativeModule.hasScreenCapturePermission();
+    } catch {
+      return Promise.resolve(false);
+    }
+  },
+  requestScreenCapturePermission: (): Promise<boolean> => {
+    if (!NativeModule) return Promise.resolve(false);
+    try {
+      return NativeModule.requestScreenCapturePermission();
+    } catch {
+      return Promise.resolve(false);
+    }
+  },
   startMonitoring: (): Promise<boolean> => {
     if (!NativeModule) return Promise.resolve(false);
     try {
