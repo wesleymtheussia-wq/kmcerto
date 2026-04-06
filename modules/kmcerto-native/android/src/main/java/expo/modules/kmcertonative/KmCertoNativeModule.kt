@@ -52,7 +52,7 @@ import kotlin.math.absoluteValue
 class KmCertoNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("KmCertoNative")
-    Events("KmCertoOverlayData")
+    Events("KmCertoOverlayData", "KmCertoPermissionStatus")
 
     AsyncFunction("isOverlayPermissionGranted") {
       val context = appContext.reactContext ?: return@AsyncFunction false
@@ -136,10 +136,7 @@ class KmCertoNativeModule : Module() {
     AsyncFunction("requestScreenCapturePermission") {
       val context = appContext.reactContext ?: return@AsyncFunction false
       try {
-        val intent = Intent(context, KmCertoPermissionActivity::class.java).apply {
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
+        KmCertoScreenCapture.requestPermission(context)
         true
       } catch (_: Throwable) { false }
     }
@@ -525,30 +522,106 @@ class KmCertoAccessibilityService : AccessibilityService() {
   }
 }
 
+// =====================================================================
+// SERVIÇO DEDICADO PARA CAPTURA DE TELA (mediaProjection)
+// 
+// REGRA DO ANDROID 14+ (documentação oficial):
+// 1. O usuário aceita a permissão (onActivityResult)
+// 2. PRIMEIRO: iniciar este Service e chamar startForeground() com MEDIA_PROJECTION
+// 3. SÓ DEPOIS: chamar getMediaProjection() para obter o token
+//
+// Se a ordem for invertida, o Android CANCELA o token silenciosamente.
+// =====================================================================
 class KmCertoScreenCaptureService : Service() {
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
+    companion object {
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_RESULT_DATA = "result_data"
+        private const val CHANNEL_ID = "kmcerto_capture"
+        private const val NOTIFICATION_ID = 1002
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Criar o canal de notificação
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "kmcerto_capture"
-            val channel = NotificationChannel(channelId, "KmCerto Captura", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "KmCerto Captura de Tela",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Notificação para captura de tela OCR"
+            }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
-
-            val notification = Notification.Builder(this, channelId)
-                .setContentTitle("KmCerto Captura Ativa")
-                .setContentText("Processando OCR em tempo real")
-                .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .build()
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(1002, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-            } else {
-                startForeground(1002, notification)
-            }
         }
-        return START_STICKY
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // PASSO 2: Chamar startForeground() ANTES de getMediaProjection()
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+            .setContentTitle("KmCerto Captura Ativa")
+            .setContentText("Processando OCR em tempo real")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
+        // PASSO 3: Agora que o foreground service está rodando, obter o MediaProjection token
+        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
+        val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA)
+        }
+
+        if (resultCode == Activity.RESULT_OK && resultData != null) {
+            try {
+                val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val projection = mpManager.getMediaProjection(resultCode, resultData)
+                if (projection != null) {
+                    KmCertoScreenCapture.onProjectionReady(projection, this)
+                    KmCertoRuntime.setScreenCaptureGranted(this, true)
+                    KmCertoLogger.init(this)
+                    KmCertoLogger.log("CAPTURA DE TELA: Permissão concedida e serviço ativo")
+                } else {
+                    KmCertoLogger.init(this)
+                    KmCertoLogger.log("CAPTURA DE TELA: getMediaProjection retornou null")
+                    stopSelf()
+                }
+            } catch (e: Exception) {
+                KmCertoLogger.init(this)
+                KmCertoLogger.log("CAPTURA DE TELA ERRO: ${e.message}")
+                stopSelf()
+            }
+        } else {
+            KmCertoLogger.init(this)
+            KmCertoLogger.log("CAPTURA DE TELA: resultCode inválido ou data nulo")
+            stopSelf()
+        }
+
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        super.onDestroy()
+        KmCertoScreenCapture.releaseProjection()
+    }
 }
 
 object KmCertoScreenCapture {
@@ -557,21 +630,43 @@ object KmCertoScreenCapture {
     private var imageReader: ImageReader? = null
     private var isCapturing = false
 
-    fun hasPermission(context: Context): Boolean = mediaProjection != null || KmCertoRuntime.isScreenCaptureGranted(context)
+    fun hasPermission(context: Context): Boolean {
+        return mediaProjection != null || KmCertoRuntime.isScreenCaptureGranted(context)
+    }
 
-    fun setPermissionResult(resultCode: Int, data: Intent, context: Context) {
-        val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mpManager.getMediaProjection(resultCode, data)
-        if (mediaProjection != null) {
-            KmCertoRuntime.setScreenCaptureGranted(context, true)
-            // Inicia o serviço de captura para manter a permissão ativa no Android 14+
-            val serviceIntent = Intent(context, KmCertoScreenCaptureService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }
+    fun requestPermission(context: Context) {
+        // Apenas abre a Activity que vai pedir a permissão ao usuário
+        val intent = Intent(context, KmCertoPermissionActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        context.startActivity(intent)
+    }
+
+    /**
+     * Chamado pelo KmCertoScreenCaptureService DEPOIS que startForeground() já foi executado.
+     * Neste ponto o token é válido e pode ser usado.
+     */
+    fun onProjectionReady(projection: MediaProjection, context: Context) {
+        mediaProjection = projection
+        // Registrar callback para saber quando a projeção for encerrada
+        projection.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                KmCertoLogger.log("CAPTURA DE TELA: MediaProjection encerrada pelo sistema")
+                releaseProjection()
+            }
+        }, Handler(Looper.getMainLooper()))
+    }
+
+    fun releaseProjection() {
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            imageReader?.close()
+            imageReader = null
+            mediaProjection?.stop()
+            mediaProjection = null
+            isCapturing = false
+        } catch (_: Throwable) {}
     }
 
     fun captureAndProcess(context: Context, packageName: String) {
@@ -580,6 +675,7 @@ object KmCertoScreenCapture {
 
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
         
         val width = metrics.widthPixels
@@ -594,24 +690,30 @@ object KmCertoScreenCapture {
         )
 
         Handler(Looper.getMainLooper()).postDelayed({
-            val image = imageReader?.acquireLatestImage()
-            if (image != null) {
-                val planes = image.planes
-                val buffer = planes[0].buffer
-                val pixelStride = planes[0].pixelStride
-                val rowStride = planes[0].rowStride
-                val rowPadding = rowStride - pixelStride * width
-                
-                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(buffer)
-                image.close()
-                
-                processBitmap(bitmap, context, packageName)
+            try {
+                val image = imageReader?.acquireLatestImage()
+                if (image != null) {
+                    val planes = image.planes
+                    val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride
+                    val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * width
+                    
+                    val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                    bitmap.copyPixelsFromBuffer(buffer)
+                    image.close()
+                    
+                    processBitmap(bitmap, context, packageName)
+                }
+            } catch (e: Exception) {
+                KmCertoLogger.log("CAPTURA ERRO: ${e.message}")
+            } finally {
+                virtualDisplay?.release()
+                virtualDisplay = null
+                imageReader?.close()
+                imageReader = null
+                isCapturing = false
             }
-            
-            virtualDisplay?.release()
-            imageReader?.close()
-            isCapturing = false
         }, 500)
     }
 
@@ -637,6 +739,16 @@ object KmCertoScreenCapture {
     }
 }
 
+// =====================================================================
+// ACTIVITY DE PERMISSÃO
+//
+// FLUXO CORRETO (Android 14+):
+// 1. onCreate: Pede permissão ao usuário via createScreenCaptureIntent()
+// 2. onActivityResult: Recebe o resultado
+// 3. Se OK: Inicia o KmCertoScreenCaptureService passando resultCode e data
+//    O SERVICE é quem vai chamar startForeground() e getMediaProjection()
+//    na ORDEM CORRETA exigida pelo Android 14+
+// =====================================================================
 class KmCertoPermissionActivity : Activity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
@@ -646,7 +758,19 @@ class KmCertoPermissionActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == 1001 && resultCode == RESULT_OK && data != null) {
-            KmCertoScreenCapture.setPermissionResult(resultCode, data, this)
+            // NÃO chamar getMediaProjection() aqui!
+            // Passar o resultCode e data para o Service, que vai:
+            // 1. Chamar startForeground() com MEDIA_PROJECTION
+            // 2. SÓ DEPOIS chamar getMediaProjection()
+            val serviceIntent = Intent(this, KmCertoScreenCaptureService::class.java).apply {
+                putExtra(KmCertoScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
+                putExtra(KmCertoScreenCaptureService.EXTRA_RESULT_DATA, data)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
         }
         finish()
     }
