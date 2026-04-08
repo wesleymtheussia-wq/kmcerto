@@ -2,24 +2,16 @@ package expo.modules.kmcertonative
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
-import android.media.ImageReader
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -27,18 +19,16 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
 import android.text.TextUtils
 import android.util.Log
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import org.json.JSONObject
@@ -47,226 +37,154 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.absoluteValue
+import android.app.Service
 
+// ─────────────────────────────────────────────
+// MÓDULO EXPO
+// ─────────────────────────────────────────────
 class KmCertoNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("KmCertoNative")
-    Events("KmCertoOverlayData", "KmCertoPermissionStatus")
+    Events("KmCertoOverlayData")
 
     AsyncFunction("isOverlayPermissionGranted") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      Settings.canDrawOverlays(context)
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      Settings.canDrawOverlays(ctx)
     }
 
     AsyncFunction("isAccessibilityServiceEnabled") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoAccessibilityService.isEnabled(context)
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoAccessibilityService.isEnabled(ctx)
     }
 
-    AsyncFunction("openOverlaySettings") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      try {
-        val intent = Intent(
-          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-          Uri.parse("package:${context.packageName}"),
-        ).apply {
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-        true
-      } catch (_: Throwable) {
-        false
-      }
-    }
-
-    AsyncFunction("openAccessibilitySettings") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      try {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-        true
-      } catch (_: Throwable) {
-        false
-      }
+    AsyncFunction("isNotificationListenerEnabled") {
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoNotificationService.isEnabled(ctx)
     }
 
     AsyncFunction("isBatteryOptimizationIgnored") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        pm.isIgnoringBatteryOptimizations(context.packageName)
-      } else {
-        true
-      }
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pm.isIgnoringBatteryOptimizations(ctx.packageName) else true
+    }
+
+    AsyncFunction("openOverlaySettings") {
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      try { ctx.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}")).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); true } catch (_: Throwable) { false }
+    }
+
+    AsyncFunction("openAccessibilitySettings") {
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      try { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); true } catch (_: Throwable) { false }
+    }
+
+    AsyncFunction("openNotificationListenerSettings") {
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      try { ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); true } catch (_: Throwable) { false }
     }
 
     AsyncFunction("openBatteryOptimizationSettings") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
       try {
-        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-          Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:${context.packageName}")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          }
-        } else {
-          Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          }
-        }
-        context.startActivity(intent)
-        true
-      } catch (_: Throwable) {
-        false
-      }
-    }
-
-    AsyncFunction("isMonitoringActive") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoRuntime.isMonitoringEnabled(context)
-    }
-
-    AsyncFunction("hasScreenCapturePermission") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoScreenCapture.hasPermission(context)
-    }
-
-    AsyncFunction("requestScreenCapturePermission") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      try {
-        KmCertoScreenCapture.requestPermission(context)
-        true
+        val i = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+          Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = Uri.parse("package:${ctx.packageName}"); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        else Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        ctx.startActivity(i); true
       } catch (_: Throwable) { false }
     }
 
+    AsyncFunction("isMonitoringActive") {
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoRuntime.isMonitoringEnabled(ctx)
+    }
+
     AsyncFunction("startMonitoring") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoRuntime.setMonitoringEnabled(context, true)
-      true
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoRuntime.setMonitoringEnabled(ctx, true); true
     }
 
     AsyncFunction("stopMonitoring") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoRuntime.setMonitoringEnabled(context, false)
-      KmCertoOverlayService.stop(context)
-      true
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoRuntime.setMonitoringEnabled(ctx, false)
+      KmCertoOverlayService.stop(ctx); true
     }
 
     AsyncFunction("hideOverlay") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoOverlayService.stop(context)
-      true
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoOverlayService.stop(ctx); true
     }
 
     AsyncFunction("setMinimumPerKm") { value: Double ->
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoRuntime.setMinimumPerKm(context, value)
-      true
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoRuntime.setMinimumPerKm(ctx, value); true
     }
 
     AsyncFunction("getMinimumPerKm") {
-      val context = appContext.reactContext ?: return@AsyncFunction KmCertoRuntime.DEFAULT_MINIMUM_PER_KM
-      KmCertoRuntime.getMinimumPerKm(context)
+      val ctx = appContext.reactContext ?: return@AsyncFunction KmCertoRuntime.DEFAULT_MIN_KM
+      KmCertoRuntime.getMinimumPerKm(ctx)
     }
 
-    AsyncFunction("getLogPath") {
-      KmCertoLogger.getLogPath()
-    }
+    AsyncFunction("getLogPath") { KmCertoLogger.getLogPath() }
 
     AsyncFunction("clearLog") {
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      KmCertoLogger.init(context)
-      true
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      KmCertoLogger.init(ctx); true
     }
 
     AsyncFunction("showTestOverlay") { payload: String? ->
-      val context = appContext.reactContext ?: return@AsyncFunction false
-      val parsed = KmCertoOfferParser.fromJsonPayload(
-        payload = payload,
-        minimumPerKm = KmCertoRuntime.getMinimumPerKm(context),
-      ) ?: return@AsyncFunction false
-
-      this@KmCertoNativeModule.sendEvent("KmCertoOverlayData", mapOf(
-        "totalFare" to parsed.totalFare,
-        "totalFareLabel" to parsed.totalFareLabel,
-        "status" to parsed.status,
-        "statusColor" to parsed.statusColor,
-        "perKm" to parsed.perKm,
-        "perHour" to (parsed.perHour ?: 0.0),
-        "perMinute" to (parsed.perMinute ?: 0.0),
-        "minimumPerKm" to parsed.minimumPerKm,
-        "sourceApp" to parsed.sourceApp,
-        "rawText" to parsed.rawText
-      ))
-      KmCertoOverlayService.show(context, parsed)
-      true
+      val ctx = appContext.reactContext ?: return@AsyncFunction false
+      val parsed = KmCertoOfferParser.fromJsonPayload(payload, KmCertoRuntime.getMinimumPerKm(ctx)) ?: return@AsyncFunction false
+      KmCertoOverlayService.show(ctx, parsed); true
     }
   }
 }
 
+// ─────────────────────────────────────────────
+// RUNTIME
+// ─────────────────────────────────────────────
 object KmCertoRuntime {
-  const val DEFAULT_MINIMUM_PER_KM = 1.5
-  private const val PREFERENCES_NAME = "kmcerto_native_preferences"
-  private const val KEY_MINIMUM_PER_KM = "minimum_per_km"
-  private const val KEY_MONITORING_ENABLED = "monitoring_enabled"
-  private const val KEY_SCREEN_CAPTURE_GRANTED = "screen_capture_granted"
+  const val DEFAULT_MIN_KM = 1.5
+  private const val PREFS = "kmcerto_prefs"
 
-  val supportedPackages: Map<String, String> = mapOf(
+  val supportedPackages = mapOf(
     "br.com.ifood.driver.app" to "iFood",
-    "com.app99.driver" to "99Food",
+    "com.app99.driver" to "99",
     "com.ubercab.driver" to "Uber",
   )
 
-  fun setMinimumPerKm(context: Context, value: Double) {
-    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-      .edit()
-      .putFloat(KEY_MINIMUM_PER_KM, value.toFloat())
-      .apply()
-  }
+  // Resource IDs conhecidos por app — busca direta igual ao GigU
+  val knownResourceIds = mapOf(
+    "com.ubercab.driver" to listOf(
+      "com.ubercab.driver:id/fare_value",
+      "com.ubercab.driver:id/trip_price",
+      "com.ubercab.driver:id/pu_eta_distance",
+      "com.ubercab.driver:id/do_distance",
+      "com.ubercab.driver:id/trip_duration",
+    ),
+    "com.app99.driver" to listOf(
+      "com.app99.driver:id/price",
+      "com.app99.driver:id/distance",
+      "com.app99.driver:id/duration",
+      "com.app99.driver:id/trip_value",
+    ),
+    "br.com.ifood.driver.app" to listOf(
+      "br.com.ifood.driver.app:id/deliveryFee",
+      "br.com.ifood.driver.app:id/distance",
+    ),
+  )
 
-  fun getMinimumPerKm(context: Context): Double {
-    val stored = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-      .getFloat(KEY_MINIMUM_PER_KM, DEFAULT_MINIMUM_PER_KM.toFloat())
-    return stored.toDouble()
-  }
-
-  fun setMonitoringEnabled(context: Context, enabled: Boolean) {
-    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-      .edit()
-      .putBoolean(KEY_MONITORING_ENABLED, enabled)
-      .apply()
-  }
-
-  fun isMonitoringEnabled(context: Context): Boolean {
-    return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-      .getBoolean(KEY_MONITORING_ENABLED, true)
-  }
-
-  fun setScreenCaptureGranted(context: Context, granted: Boolean) {
-    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-      .edit()
-      .putBoolean(KEY_SCREEN_CAPTURE_GRANTED, granted)
-      .apply()
-  }
-
-  fun isScreenCaptureGranted(context: Context): Boolean {
-    return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-      .getBoolean(KEY_SCREEN_CAPTURE_GRANTED, false)
-  }
-
-  fun supportsPackage(packageName: String): Boolean {
-    return supportedPackages.keys.any { key -> packageName == key || packageName.startsWith("$key:") }
-  }
-
-  fun sourceLabel(packageName: String): String {
-    return supportedPackages.entries.firstOrNull { packageName == it.key || packageName.startsWith("${it.key}:") }
-      ?.value
-      ?: packageName.substringAfterLast('.')
-  }
+  fun setMinimumPerKm(ctx: Context, v: Double) = prefs(ctx).edit().putFloat("min_km", v.toFloat()).apply()
+  fun getMinimumPerKm(ctx: Context) = prefs(ctx).getFloat("min_km", DEFAULT_MIN_KM.toFloat()).toDouble()
+  fun setMonitoringEnabled(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("monitoring", v).apply()
+  fun isMonitoringEnabled(ctx: Context) = prefs(ctx).getBoolean("monitoring", true)
+  fun supportsPackage(pkg: String) = supportedPackages.keys.any { pkg == it || pkg.startsWith("$it:") }
+  fun sourceLabel(pkg: String) = supportedPackages.entries.firstOrNull { pkg == it.key || pkg.startsWith("${it.key}:") }?.value ?: pkg.substringAfterLast('.')
+  private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }
 
+// ─────────────────────────────────────────────
+// DATA CLASS
+// ─────────────────────────────────────────────
 data class OfferDecisionData(
   val totalFare: Double,
   val totalFareLabel: String,
@@ -280,729 +198,418 @@ data class OfferDecisionData(
   val rawText: String,
   val distanceKm: Double? = null,
 ) {
-  fun toJson(): String {
-    return JSONObject().apply {
-      put("totalFare", totalFare)
-      put("totalFareLabel", totalFareLabel)
-      put("status", status)
-      put("statusColor", statusColor)
-      put("perKm", perKm)
-      put("perHour", perHour)
-      put("perMinute", perMinute)
-      put("minimumPerKm", minimumPerKm)
-      put("sourceApp", sourceApp)
-      put("rawText", rawText)
-      if (distanceKm != null) put("distanceKm", distanceKm)
-    }.toString()
-  }
+  fun toJson() = JSONObject().apply {
+    put("totalFare", totalFare); put("totalFareLabel", totalFareLabel)
+    put("status", status); put("statusColor", statusColor); put("perKm", perKm)
+    put("perHour", perHour); put("perMinute", perMinute); put("minimumPerKm", minimumPerKm)
+    put("sourceApp", sourceApp); put("rawText", rawText)
+    if (distanceKm != null) put("distanceKm", distanceKm)
+  }.toString()
 
   companion object {
     fun fromJson(json: String?): OfferDecisionData? {
       if (json.isNullOrBlank()) return null
       return try {
-        val payload = JSONObject(json)
+        val p = JSONObject(json)
         OfferDecisionData(
-          totalFare = payload.optDouble("totalFare", Double.NaN),
-          totalFareLabel = payload.optString("totalFareLabel", ""),
-          status = payload.optString("status", "RECUSAR"),
-          statusColor = payload.optString("statusColor", "#DC2626"),
-          perKm = payload.optDouble("perKm", Double.NaN),
-          perHour = if (payload.has("perHour") && !payload.isNull("perHour")) payload.optDouble("perHour") else null,
-          perMinute = if (payload.has("perMinute") && !payload.isNull("perMinute")) payload.optDouble("perMinute") else null,
-          minimumPerKm = payload.optDouble("minimumPerKm", 1.5),
-          sourceApp = payload.optString("sourceApp", "Desconhecido"),
-          rawText = payload.optString("rawText", ""),
-          distanceKm = if (payload.has("distanceKm")) payload.optDouble("distanceKm") else null
+          totalFare = p.optDouble("totalFare", Double.NaN),
+          totalFareLabel = p.optString("totalFareLabel", ""),
+          status = p.optString("status", "RECUSAR"),
+          statusColor = p.optString("statusColor", "#DC2626"),
+          perKm = p.optDouble("perKm", 0.0),
+          perHour = if (p.has("perHour") && !p.isNull("perHour")) p.optDouble("perHour") else null,
+          perMinute = if (p.has("perMinute") && !p.isNull("perMinute")) p.optDouble("perMinute") else null,
+          minimumPerKm = p.optDouble("minimumPerKm", KmCertoRuntime.DEFAULT_MIN_KM),
+          sourceApp = p.optString("sourceApp", "KmCerto"),
+          rawText = p.optString("rawText", ""),
+          distanceKm = if (p.has("distanceKm") && !p.isNull("distanceKm")) p.optDouble("distanceKm") else null,
         )
-      } catch (_: Throwable) {
-        null
-      }
+      } catch (_: Throwable) { null }
     }
   }
 }
 
+// ─────────────────────────────────────────────
+// PARSER
+// ─────────────────────────────────────────────
 object KmCertoOfferParser {
-  fun fromJsonPayload(payload: String?, minimumPerKm: Double): OfferDecisionData? {
-    if (payload.isNullOrBlank()) return null
-    return try {
-      val json = JSONObject(payload)
-      val fare = json.optDouble("totalFare", 0.0)
-      val distance = json.optDouble("totalDistance", 0.0)
-      val minutes = json.optDouble("totalMinutes", 0.0)
-      val source = json.optString("sourceApp", "Manual")
-      val raw = json.optString("rawText", "")
+  private val locale = Locale("pt", "BR")
+  private val currencyRx = Regex("""R\$\s*([0-9]{1,4}(?:[.][0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:[.,][0-9]{1,2})?)""")
+  private val kmRx = Regex("""(\d{1,3}(?:[.,]\d{1,2})?)\s?km\b""", RegexOption.IGNORE_CASE)
+  private val minRx = Regex("""(\d{1,3})\s?min(?:uto)?s?\b""", RegexOption.IGNORE_CASE)
+  private val totalKmRx = Regex("""(?:dist[âa]ncia\s+total|viagem\s+de\s+\d+\s+minutos)\s*\(?\s*(\d{1,3}(?:[.,]\d{1,2})?)\s?km""", RegexOption.IGNORE_CASE)
+  private val totalMinRx = Regex("""(?:viagem\s+de|tempo)\s+(\d{1,3})\s?min""", RegexOption.IGNORE_CASE)
 
-      calculate(fare, distance, minutes, minimumPerKm, source, raw)
-    } catch (_: Throwable) {
-      null
-    }
-  }
-
-  fun parseFromText(text: String, minimumPerKm: Double, sourceApp: String): OfferDecisionData? {
+  fun parse(rawText: String, minimumPerKm: Double, sourcePackage: String): OfferDecisionData? {
+    val text = rawText.replace("\n", " ").replace(Regex("\\s+"), " ").trim()
     if (text.isBlank()) return null
 
-    val fare = findFare(text) ?: return null
-    val distance = findDistance(text) ?: return null
-    val minutes = findMinutes(text)
+    val fare = currencyRx.find(text)?.groupValues?.getOrNull(1)?.let(::ptBr) ?: return null
+    val distance = totalKmRx.find(text)?.groupValues?.getOrNull(1)?.let(::ptBr)
+      ?: kmRx.findAll(text).mapNotNull { it.groupValues.getOrNull(1)?.let(::ptBr) }.filter { it in 0.1..200.0 }.minOrNull()
+      ?: return null
+    val minutes = totalMinRx.find(text)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+      ?: minRx.findAll(text).mapNotNull { it.groupValues.getOrNull(1)?.toDoubleOrNull() }.toList().let { l ->
+        if (l.isEmpty()) null else if (l.size == 1) l[0] else l.take(2).sum().takeIf { it in 1.0..360.0 }
+      }
 
-    return calculate(fare, distance, minutes, minimumPerKm, sourceApp, text)
-  }
-
-  private fun calculate(
-    fare: Double,
-    distance: Double,
-    minutes: Double?,
-    minimumPerKm: Double,
-    sourceApp: String,
-    rawText: String
-  ): OfferDecisionData {
-    val perKm = if (distance > 0) fare / distance else 0.0
-    val perHour = if (minutes != null && minutes > 0) (fare / minutes) * 60 else null
-    val perMinute = if (minutes != null && minutes > 0) fare / minutes else null
-
-    val isAccepted = perKm >= minimumPerKm
-    val status = if (isAccepted) "ACEITAR" else "RECUSAR"
-    val statusColor = if (isAccepted) "#16A34A" else "#DC2626"
+    if (fare <= 0 || distance <= 0) return null
+    val perKm = fare / distance
+    val perMin = if (minutes != null && minutes > 0) fare / minutes else null
+    val perHour = if (minutes != null && minutes > 0) fare / (minutes / 60.0) else null
+    val accept = perKm + 0.0001 >= minimumPerKm
 
     return OfferDecisionData(
       totalFare = fare,
-      totalFareLabel = "R$ ${String.format("%.2f", fare)}",
-      status = status,
-      statusColor = statusColor,
-      perKm = perKm,
-      perHour = perHour,
-      perMinute = perMinute,
-      minimumPerKm = minimumPerKm,
-      sourceApp = sourceApp,
-      rawText = rawText,
-      distanceKm = distance
+      totalFareLabel = NumberFormat.getCurrencyInstance(locale).format(fare),
+      status = if (accept) "ACEITAR" else "RECUSAR",
+      statusColor = if (accept) "#16A34A" else "#DC2626",
+      perKm = r2(perKm), perHour = perHour?.let(::r2), perMinute = perMin?.let(::r2),
+      minimumPerKm = r2(minimumPerKm),
+      sourceApp = KmCertoRuntime.sourceLabel(sourcePackage),
+      rawText = text, distanceKm = r2(distance),
     )
   }
 
-  private fun findFare(text: String): Double? {
-    val regex = Regex("""(?:R\$|RS|S|R)\s*(\d+[\.,]\d{2})""", RegexOption.IGNORE_CASE)
-    return regex.find(text)?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull()
+  fun fromJsonPayload(payload: String?, minimumPerKm: Double): OfferDecisionData? {
+    if (payload.isNullOrBlank()) return null
+    return try {
+      val j = JSONObject(payload)
+      val fare = j.optDouble("totalFare", Double.NaN)
+      val perKm = j.optDouble("perKm", Double.NaN)
+      if (!fare.isFinite() || !perKm.isFinite()) return null
+      OfferDecisionData(
+        totalFare = fare,
+        totalFareLabel = j.optString("totalFareLabel", NumberFormat.getCurrencyInstance(locale).format(fare)),
+        status = j.optString("status", if (perKm >= minimumPerKm) "ACEITAR" else "RECUSAR"),
+        statusColor = j.optString("statusColor", if (perKm >= minimumPerKm) "#16A34A" else "#DC2626"),
+        perKm = r2(perKm),
+        perHour = if (j.has("perHour") && !j.isNull("perHour")) r2(j.optDouble("perHour")) else null,
+        perMinute = if (j.has("perMinute") && !j.isNull("perMinute")) r2(j.optDouble("perMinute")) else null,
+        minimumPerKm = j.optDouble("minimumPerKm", minimumPerKm),
+        sourceApp = j.optString("sourceApp", "Teste"), rawText = j.optString("rawText", ""),
+      )
+    } catch (_: Throwable) { null }
   }
 
-  private fun findDistance(text: String): Double? {
-    val regex = Regex("""(\d+[\.,]\d+)\s*(?:km|k\s*m)""", RegexOption.IGNORE_CASE)
-    return regex.find(text)?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull()
-  }
-
-  private fun findMinutes(text: String): Double? {
-    val regex = Regex("""(\d+)\s*(?:min|m\s*i\s*n)""", RegexOption.IGNORE_CASE)
-    return regex.find(text)?.groupValues?.get(1)?.toDoubleOrNull()
-  }
+  private fun ptBr(s: String) = s.trim().replace(".", "").replace(',', '.').toDoubleOrNull() ?: Double.NaN
+  private fun r2(v: Double) = kotlin.math.round(v * 100.0) / 100.0
 }
 
+// ─────────────────────────────────────────────
+// ACCESSIBILITY SERVICE — iFood + descoberta de IDs
+// ─────────────────────────────────────────────
 class KmCertoAccessibilityService : AccessibilityService() {
   private var wakeLock: PowerManager.WakeLock? = null
-
-  // =====================================================================
-  // CONTROLE DE FLOOD: Impede que o OCR seja chamado centenas de vezes
-  // por segundo. O Accessibility Service recebe eventos a cada ~10ms,
-  // mas o OCR só precisa rodar a cada 10 segundos no máximo.
-  // =====================================================================
-  private var lastOcrAttemptTime: Long = 0L
-  private var ocrNoPermissionLogged: Boolean = false
+  private var lastSig: String? = null
+  private var lastEmit = 0L
 
   companion object {
-    // Intervalo mínimo entre tentativas de OCR (10 segundos)
-    private const val OCR_COOLDOWN_MS = 10_000L
-    // Intervalo mínimo entre processamentos de texto por acessibilidade (1 segundo)
-    private const val TEXT_COOLDOWN_MS = 1_000L
-
-    fun isEnabled(context: Context): Boolean {
-      val expectedComponentName = android.content.ComponentName(context, KmCertoAccessibilityService::class.java)
-      val enabledServices = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-      val colonSplitter = TextUtils.SimpleStringSplitter(':')
-      colonSplitter.setString(enabledServices)
-      while (colonSplitter.hasNext()) {
-        val componentName = colonSplitter.next()
-        if (componentName.equals(expectedComponentName.flattenToString(), ignoreCase = true)) return true
-      }
-      return false
+    fun isEnabled(ctx: Context): Boolean {
+      val enabled = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
+      val expected = "${ctx.packageName}/${KmCertoAccessibilityService::class.java.name}"
+      return TextUtils.SimpleStringSplitter(':').run { setString(enabled); any { it.equals(expected, ignoreCase = true) } }
     }
   }
-
-  private var lastTextProcessTime: Long = 0L
 
   override fun onServiceConnected() {
     super.onServiceConnected()
-    val info = AccessibilityServiceInfo().apply {
-      eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+    KmCertoLogger.init(this)
+    KmCertoLogger.log("ACESSIBILIDADE: Conectado")
+    val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KmCerto:WakeLock")
+    wakeLock?.acquire(10 * 60 * 1000L)
+    serviceInfo = AccessibilityServiceInfo().apply {
+      eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
       feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
       flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-              AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-              AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-      notificationTimeout = 100
-    }
-    this.serviceInfo = info
-    
-    val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KmCerto::WakeLock")
-    
-    KmCertoLogger.init(this)
-    KmCertoLogger.log("Serviço de Acessibilidade Conectado")
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val channelId = "kmcerto_monitoring"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "KmCerto Monitoramento", NotificationManager.IMPORTANCE_LOW)
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
-        }
-
-        val notification = Notification.Builder(this, channelId)
-            .setContentTitle("KmCerto Ativo")
-            .setContentText("Monitorando ofertas em tempo real")
-            .setSmallIcon(android.R.drawable.ic_menu_view)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(1001, notification)
-        }
+        AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+      notificationTimeout = 50
+      packageNames = KmCertoRuntime.supportedPackages.keys.toTypedArray()
     }
   }
 
-  override fun onAccessibilityEvent(event: AccessibilityEvent) {
-    if (!KmCertoRuntime.isMonitoringEnabled(this)) return
+  override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    val pkg = event?.packageName?.toString() ?: return
+    if (!KmCertoRuntime.supportsPackage(pkg) || !KmCertoRuntime.isMonitoringEnabled(this)) return
 
-    val packageName = event.packageName?.toString() ?: return
-    if (!KmCertoRuntime.supportsPackage(packageName)) return
+    val allWindows = windows ?: emptyList()
+    val texts = mutableListOf<String>()
+    val allIds = mutableSetOf<String>()
 
+    if (allWindows.isEmpty()) {
+      rootInActiveWindow?.let {
+        texts.add(collectText(it))
+        collectIds(it, allIds)
+      }
+    } else {
+      allWindows.forEach { w ->
+        w.root?.let {
+          texts.add(collectText(it))
+          collectIds(it, allIds)
+        }
+      }
+    }
+
+    // Loga TODOS os Resource IDs encontrados — modo descoberta (igual ao que o GigU usa)
+    if (allIds.isNotEmpty()) {
+      KmCertoLogger.log("IDS pkg=$pkg | ${allIds.joinToString(" | ")}")
+    }
+
+    // Tenta busca direta por Resource ID (abordagem GigU)
+    val directResult = tryDirectIdSearch(pkg)
+    if (directResult != null) {
+      emitIfNew(directResult, pkg); return
+    }
+
+    // Fallback: parse por texto
+    val text = texts.joinToString(" | ").trim()
+    if (text.isBlank()) return
+
+    val parsed = KmCertoOfferParser.parse(text, KmCertoRuntime.getMinimumPerKm(this), pkg) ?: return
+    KmCertoLogger.log("ACESS_OK(texto) ${parsed.totalFareLabel} | ${parsed.distanceKm}km | ${parsed.status}")
+    emitIfNew(parsed, pkg)
+  }
+
+  private fun tryDirectIdSearch(pkg: String): OfferDecisionData? {
+    val ids = KmCertoRuntime.knownResourceIds[pkg] ?: return null
+    val root = rootInActiveWindow ?: return null
+
+    var fareText: String? = null
+    var distText: String? = null
+    var minText: String? = null
+
+    for (id in ids) {
+      val nodes = root.findAccessibilityNodeInfosByViewId(id)
+      if (nodes.isNullOrEmpty()) continue
+      val text = nodes[0].text?.toString()?.trim() ?: continue
+      KmCertoLogger.log("ID_ENCONTRADO $id = $text")
+
+      when {
+        id.contains("fare") || id.contains("price") || id.contains("value") -> fareText = text
+        id.contains("distance") || id.contains("dist") -> distText = text
+        id.contains("duration") || id.contains("time") || id.contains("eta") -> minText = text
+      }
+    }
+
+    if (fareText == null) return null
+    val combined = listOfNotNull(fareText, distText, minText).joinToString(" ")
+    return KmCertoOfferParser.parse(combined, KmCertoRuntime.getMinimumPerKm(this), pkg)
+  }
+
+  private fun emitIfNew(parsed: OfferDecisionData, pkg: String) {
+    val sig = "$pkg|${parsed.totalFareLabel}|${parsed.perKm}"
     val now = System.currentTimeMillis()
+    if (sig == lastSig && now - lastEmit < 3500) return
+    lastSig = sig; lastEmit = now
+    KmCertoLogger.log("OVERLAY ${parsed.totalFareLabel} | ${parsed.distanceKm}km | ${parsed.status}")
+    KmCertoOverlayService.show(this, parsed)
+  }
 
-    // Cooldown para processamento de texto (1 segundo)
-    if (now - lastTextProcessTime < TEXT_COOLDOWN_MS) return
-    lastTextProcessTime = now
-
-    wakeLock?.acquire(10 * 60 * 1000L /*10 minutes*/)
-
-    val allText = StringBuilder()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-      windows.forEach { window ->
-        collectTextRecursive(window.root, allText)
-      }
+  private fun collectText(node: AccessibilityNodeInfo): String {
+    val parts = linkedSetOf<String>()
+    fun visit(n: AccessibilityNodeInfo?) {
+      if (n == null) return
+      n.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { parts += it }
+      n.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { parts += it }
+      for (i in 0 until n.childCount) visit(n.getChild(i))
     }
+    visit(node); return parts.joinToString(" | ")
+  }
 
-    if (allText.isEmpty()) {
-      collectTextRecursive(rootInActiveWindow, allText)
-    }
+  private fun collectIds(node: AccessibilityNodeInfo, ids: MutableSet<String>) {
+    node.viewIdResourceName?.takeIf { it.isNotBlank() }?.let { ids += it }
+    for (i in 0 until node.childCount) collectIds(node.getChild(i), ids)
+  }
 
-    if (allText.isEmpty()) {
-      event.text.forEach { allText.append(it).append(" ") }
-    }
+  override fun onInterrupt() { wakeLock?.let { if (it.isHeld) it.release() } }
+  override fun onDestroy() { wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
+}
 
-    val text = allText.toString()
-    if (text.isNotBlank()) {
-      processText(text, packageName)
-    }
-    
-    // =====================================================================
-    // OCR via MediaProjection: Só tenta se:
-    // 1. O pacote é Uber ou 99 (que podem precisar de OCR)
-    // 2. O texto da acessibilidade está vazio (fallback)
-    // 3. O cooldown de 10 segundos passou
-    // 4. O mediaProjection está realmente disponível em memória
-    // =====================================================================
-    val needsOcr = packageName.contains("uber") || packageName.contains("app99")
-    if (needsOcr && text.isBlank()) {
-      if (now - lastOcrAttemptTime >= OCR_COOLDOWN_MS) {
-        lastOcrAttemptTime = now
-        
-        if (KmCertoScreenCapture.isProjectionAlive()) {
-          // Token de MediaProjection está vivo, pode capturar
-          ocrNoPermissionLogged = false
-          KmCertoScreenCapture.captureAndProcess(this, packageName)
-        } else {
-          // Token não está disponível — logar apenas UMA VEZ para não flood
-          if (!ocrNoPermissionLogged) {
-            KmCertoLogger.log("OCR_INFO: MediaProjection não disponível. O texto será lido apenas via acessibilidade. Para ativar OCR, conceda a permissão de captura de tela no app.")
-            ocrNoPermissionLogged = true
-          }
-        }
-      }
+// ─────────────────────────────────────────────
+// NOTIFICATION LISTENER — 99 e Uber via notificação
+// ─────────────────────────────────────────────
+class KmCertoNotificationService : NotificationListenerService() {
+
+  companion object {
+    fun isEnabled(ctx: Context): Boolean {
+      val flat = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: return false
+      return flat.contains(ComponentName(ctx, KmCertoNotificationService::class.java).flattenToString())
     }
   }
 
-  private fun collectTextRecursive(node: AccessibilityNodeInfo?, out: StringBuilder) {
-    if (node == null) return
-    
-    val text = node.text?.toString()
-    val contentDesc = node.contentDescription?.toString()
-    val viewId = node.viewIdResourceName
-    
-    if (!text.isNullOrBlank()) {
-      out.append(text).append(" ")
-    }
-    if (!contentDesc.isNullOrBlank()) {
-      out.append(contentDesc).append(" ")
-    }
+  override fun onNotificationPosted(sbn: StatusBarNotification?) {
+    val pkg = sbn?.packageName ?: return
+    if (!KmCertoRuntime.supportsPackage(pkg) || !KmCertoRuntime.isMonitoringEnabled(this)) return
 
-    for (i in 0 until node.childCount) {
-      collectTextRecursive(node.getChild(i), out)
+    val extras = sbn.notification?.extras ?: return
+    val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+    val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+    val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+    val full = "$title $text $bigText".trim()
+    if (full.isBlank()) return
+
+    KmCertoLogger.log("NOTIF pkg=$pkg | $full")
+
+    if (!full.contains("R$") && !full.contains("km", ignoreCase = true)) return
+
+    val parsed = KmCertoOfferParser.parse(full, KmCertoRuntime.getMinimumPerKm(this), pkg) ?: run {
+      KmCertoLogger.log("NOTIF_FALHOU — $full"); return
     }
+    KmCertoLogger.log("NOTIF_OK ${parsed.totalFareLabel} | ${parsed.distanceKm}km | ${parsed.status}")
+    KmCertoOverlayService.show(this, parsed)
   }
 
-  private fun processText(text: String, packageName: String) {
-    val minimumPerKm = KmCertoRuntime.getMinimumPerKm(this)
-    val sourceApp = KmCertoRuntime.sourceLabel(packageName)
-    
-    val offer = KmCertoOfferParser.parseFromText(text, minimumPerKm, sourceApp)
-    if (offer != null) {
-      KmCertoOverlayService.show(this, offer)
-    }
-  }
-
-  override fun onInterrupt() {}
-
-  override fun onDestroy() {
-    super.onDestroy()
-    wakeLock?.let { if (it.isHeld) it.release() }
-  }
+  override fun onNotificationRemoved(sbn: StatusBarNotification?) = Unit
 }
 
-// =====================================================================
-// SERVIÇO DEDICADO PARA CAPTURA DE TELA (mediaProjection)
-// 
-// REGRA DO ANDROID 14+ (documentação oficial):
-// 1. O usuário aceita a permissão (onActivityResult)
-// 2. PRIMEIRO: iniciar este Service e chamar startForeground() com MEDIA_PROJECTION
-// 3. SÓ DEPOIS: chamar getMediaProjection() para obter o token
-//
-// Se a ordem for invertida, o Android CANCELA o token silenciosamente.
-//
-// Este service usa START_STICKY para que o Android o reinicie se for morto.
-// Porém, o token de MediaProjection NÃO sobrevive a reinícios — o usuário
-// precisará conceder a permissão novamente se o service for destruído.
-// =====================================================================
-class KmCertoScreenCaptureService : Service() {
-
-    companion object {
-        const val EXTRA_RESULT_CODE = "result_code"
-        const val EXTRA_RESULT_DATA = "result_data"
-        private const val CHANNEL_ID = "kmcerto_capture"
-        private const val NOTIFICATION_ID = 1002
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "KmCerto Captura de Tela",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Notificação para captura de tela OCR"
-            }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
-        }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // PASSO 2: Chamar startForeground() ANTES de getMediaProjection()
-        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-            .setContentTitle("KmCerto Captura Ativa")
-            .setContentText("Processando OCR em tempo real")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setOngoing(true)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-
-        // PASSO 3: Agora que o foreground service está rodando, obter o MediaProjection token
-        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
-        val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent?.getParcelableExtra(EXTRA_RESULT_DATA)
-        }
-
-        if (resultCode == Activity.RESULT_OK && resultData != null) {
-            try {
-                val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                val projection = mpManager.getMediaProjection(resultCode, resultData)
-                if (projection != null) {
-                    KmCertoScreenCapture.onProjectionReady(projection, this)
-                    KmCertoRuntime.setScreenCaptureGranted(this, true)
-                    KmCertoLogger.init(this)
-                    KmCertoLogger.log("CAPTURA DE TELA: Permissão concedida e serviço ativo com sucesso")
-                } else {
-                    KmCertoLogger.init(this)
-                    KmCertoLogger.log("CAPTURA DE TELA: getMediaProjection retornou null")
-                    KmCertoRuntime.setScreenCaptureGranted(this, false)
-                    stopSelf()
-                }
-            } catch (e: Exception) {
-                KmCertoLogger.init(this)
-                KmCertoLogger.log("CAPTURA DE TELA ERRO: ${e.message}")
-                KmCertoRuntime.setScreenCaptureGranted(this, false)
-                stopSelf()
-            }
-        } else {
-            // Se não tem resultCode/data (ex: service reiniciado pelo Android após ser morto),
-            // não temos como recriar o token. Apenas manter o service vivo.
-            if (intent == null || !intent.hasExtra(EXTRA_RESULT_CODE)) {
-                KmCertoLogger.init(this)
-                KmCertoLogger.log("CAPTURA DE TELA: Service reiniciado sem token. OCR indisponível até nova permissão.")
-                // Marcar como não concedido já que o token morreu
-                KmCertoRuntime.setScreenCaptureGranted(this, false)
-                stopSelf()
-            } else {
-                KmCertoLogger.init(this)
-                KmCertoLogger.log("CAPTURA DE TELA: Usuário negou a permissão")
-                KmCertoRuntime.setScreenCaptureGranted(this, false)
-                stopSelf()
-            }
-        }
-
-        // START_STICKY: O Android reinicia o service se for morto, mas sem o token original
-        return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        super.onDestroy()
-        KmCertoScreenCapture.releaseProjection()
-    }
-}
-
-object KmCertoScreenCapture {
-    private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
-    @Volatile
-    private var isCapturing = false
-
-    /**
-     * Verifica se o token de MediaProjection está realmente vivo em memória.
-     * Diferente de hasPermission(), que verifica o SharedPreferences.
-     */
-    fun isProjectionAlive(): Boolean {
-        return mediaProjection != null
-    }
-
-    fun hasPermission(context: Context): Boolean {
-        // Verificar se o token está vivo OU se foi concedido anteriormente
-        return mediaProjection != null || KmCertoRuntime.isScreenCaptureGranted(context)
-    }
-
-    fun requestPermission(context: Context) {
-        val intent = Intent(context, KmCertoPermissionActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    }
-
-    /**
-     * Chamado pelo KmCertoScreenCaptureService DEPOIS que startForeground() já foi executado.
-     * Neste ponto o token é válido e pode ser usado.
-     */
-    fun onProjectionReady(projection: MediaProjection, context: Context) {
-        // Liberar projeção anterior se existir
-        if (mediaProjection != null) {
-            try { mediaProjection?.stop() } catch (_: Throwable) {}
-        }
-        mediaProjection = projection
-        projection.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                KmCertoLogger.log("CAPTURA DE TELA: MediaProjection encerrada pelo sistema")
-                mediaProjection = null
-                virtualDisplay?.release()
-                virtualDisplay = null
-                imageReader?.close()
-                imageReader = null
-                isCapturing = false
-                // Marcar como não concedido já que o token morreu
-                KmCertoRuntime.setScreenCaptureGranted(context, false)
-            }
-        }, Handler(Looper.getMainLooper()))
-    }
-
-    fun releaseProjection() {
-        try {
-            virtualDisplay?.release()
-            virtualDisplay = null
-            imageReader?.close()
-            imageReader = null
-            mediaProjection?.stop()
-            mediaProjection = null
-            isCapturing = false
-        } catch (_: Throwable) {}
-    }
-
-    fun captureAndProcess(context: Context, packageName: String) {
-        // Proteção dupla: verificar se não está capturando E se o token existe
-        if (isCapturing) return
-        val projection = mediaProjection ?: return
-        isCapturing = true
-
-        try {
-            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val metrics = android.util.DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
-            
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            val density = metrics.densityDpi
-
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            virtualDisplay = projection.createVirtualDisplay(
-                "KmCertoCapture", width, height, density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface, null, null
-            )
-
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    val image = imageReader?.acquireLatestImage()
-                    if (image != null) {
-                        val planes = image.planes
-                        val buffer = planes[0].buffer
-                        val pixelStride = planes[0].pixelStride
-                        val rowStride = planes[0].rowStride
-                        val rowPadding = rowStride - pixelStride * width
-                        
-                        val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-                        bitmap.copyPixelsFromBuffer(buffer)
-                        image.close()
-                        
-                        processBitmap(bitmap, context, packageName)
-                    }
-                } catch (e: Exception) {
-                    KmCertoLogger.log("CAPTURA ERRO: ${e.message}")
-                } finally {
-                    virtualDisplay?.release()
-                    virtualDisplay = null
-                    imageReader?.close()
-                    imageReader = null
-                    isCapturing = false
-                }
-            }, 500)
-        } catch (e: Exception) {
-            KmCertoLogger.log("CAPTURA ERRO INIT: ${e.message}")
-            virtualDisplay?.release()
-            virtualDisplay = null
-            imageReader?.close()
-            imageReader = null
-            isCapturing = false
-        }
-    }
-
-    private fun processBitmap(bitmap: Bitmap, context: Context, packageName: String) {
-        val image = InputImage.fromBitmap(bitmap, 0)
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        
-        recognizer.process(image)
-            .addOnSuccessListener { visionText ->
-                val text = visionText.text
-                if (text.isNotBlank()) {
-                    val minimumPerKm = KmCertoRuntime.getMinimumPerKm(context)
-                    val sourceApp = KmCertoRuntime.sourceLabel(packageName)
-                    val offer = KmCertoOfferParser.parseFromText(text, minimumPerKm, sourceApp)
-                    if (offer != null) {
-                        KmCertoOverlayService.show(context, offer)
-                    }
-                }
-            }
-            .addOnFailureListener { e ->
-                KmCertoLogger.log("OCR_FALHA: ${e.message}")
-            }
-    }
-}
-
-// =====================================================================
-// ACTIVITY DE PERMISSÃO
-//
-// FLUXO CORRETO (Android 14+):
-// 1. onCreate: Pede permissão ao usuário via createScreenCaptureIntent()
-// 2. onActivityResult: Recebe o resultado
-// 3. Se OK: Inicia o KmCertoScreenCaptureService passando resultCode e data
-//    O SERVICE é quem vai chamar startForeground() e getMediaProjection()
-//    na ORDEM CORRETA exigida pelo Android 14+
-// =====================================================================
-class KmCertoPermissionActivity : Activity() {
-    override fun onCreate(savedInstanceState: android.os.Bundle?) {
-        super.onCreate(savedInstanceState)
-        val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        startActivityForResult(mpManager.createScreenCaptureIntent(), 1001)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == 1001 && resultCode == RESULT_OK && data != null) {
-            // NÃO chamar getMediaProjection() aqui!
-            // Passar o resultCode e data para o Service, que vai:
-            // 1. Chamar startForeground() com MEDIA_PROJECTION
-            // 2. SÓ DEPOIS chamar getMediaProjection()
-            val serviceIntent = Intent(this, KmCertoScreenCaptureService::class.java).apply {
-                putExtra(KmCertoScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
-                putExtra(KmCertoScreenCaptureService.EXTRA_RESULT_DATA, data)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-        } else {
-            // Usuário negou ou cancelou
-            KmCertoLogger.init(this)
-            KmCertoLogger.log("CAPTURA DE TELA: Usuário cancelou a permissão")
-        }
-        finish()
-    }
-}
-
+// ─────────────────────────────────────────────
+// LOGGER
+// ─────────────────────────────────────────────
 object KmCertoLogger {
   private var logFile: File? = null
   private val sdf = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
-  fun init(context: Context) {
-    val dir = context.getExternalFilesDir(null) ?: context.filesDir
-    logFile = File(dir, "kmcerto_debug.txt")
-    if (logFile?.exists() == true) {
-        if (logFile!!.length() > 1024 * 1024) logFile?.delete()
-    }
-  }
-
-  fun log(message: String) {
-    val time = sdf.format(Date())
-    val line = "[$time] $message\n"
-    Log.d("KmCerto", message)
+  fun init(ctx: Context) {
     try {
-      logFile?.appendText(line)
-    } catch (_: Throwable) {}
+      val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+      dir.mkdirs()
+      logFile = File(dir, "kmcerto_debug.txt")
+      if (logFile?.exists() == true && logFile!!.length() > 2 * 1024 * 1024) logFile?.delete()
+    } catch (_: Throwable) {
+      logFile = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "kmcerto_debug.txt")
+    }
   }
 
-  fun getLogPath(): String = logFile?.absolutePath ?: "N/A"
+  fun log(msg: String) {
+    val line = "[${sdf.format(Date())}] $msg\n"
+    Log.d("KmCerto", msg)
+    try { logFile?.appendText(line) } catch (_: Throwable) {}
+  }
+
+  fun getLogPath() = logFile?.absolutePath ?: "N/A"
 }
 
+// ─────────────────────────────────────────────
+// OVERLAY SERVICE
+// ─────────────────────────────────────────────
 class KmCertoOverlayService : Service() {
-    companion object {
-        private var overlayView: LinearLayout? = null
+  companion object {
+    private var overlayView: LinearLayout? = null
 
-        fun show(context: Context, data: OfferDecisionData) {
-            Handler(Looper.getMainLooper()).post {
-                try {
-                    val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                    stop(context)
+    fun show(ctx: Context, data: OfferDecisionData) {
+      Handler(Looper.getMainLooper()).post {
+        try {
+          val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+          stop(ctx)
 
-                    val view = LinearLayout(context).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(40, 30, 40, 30)
-                        val shape = GradientDrawable().apply {
-                            setColor(Color.parseColor("#1D2026"))
-                            cornerRadius = 40f
-                            setStroke(4, Color.parseColor("#2D313A"))
-                        }
-                        background = shape
-                    }
-
-                    val header = LinearLayout(context).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                    }
-                    
-                    val sourceTxt = TextView(context).apply {
-                        text = data.sourceApp
-                        setTextColor(Color.parseColor("#9CA3AF"))
-                        textSize = 12f
-                        typeface = Typeface.DEFAULT_BOLD
-                    }
-                    
-                    val statusTxt = TextView(context).apply {
-                        text = data.status
-                        setTextColor(Color.WHITE)
-                        textSize = 12f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setPadding(20, 5, 20, 5)
-                        val bg = GradientDrawable().apply {
-                            setColor(Color.parseColor(data.statusColor))
-                            cornerRadius = 12f
-                        }
-                        background = bg
-                    }
-                    
-                    header.addView(sourceTxt, LinearLayout.LayoutParams(0, -2, 1f))
-                    header.addView(statusTxt)
-                    view.addView(header)
-
-                    val fareTxt = TextView(context).apply {
-                        text = data.totalFareLabel
-                        setTextColor(Color.WHITE)
-                        textSize = 32f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setPadding(0, 10, 0, 10)
-                    }
-                    view.addView(fareTxt)
-
-                    val metrics = LinearLayout(context).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        setPadding(0, 10, 0, 0)
-                    }
-                    
-                    val perKmTxt = TextView(context).apply {
-                        text = "R$ ${String.format("%.2f", data.perKm)}/km"
-                        setTextColor(Color.parseColor("#F5D400"))
-                        textSize = 16f
-                        typeface = Typeface.DEFAULT_BOLD
-                    }
-                    metrics.addView(perKmTxt)
-                    view.addView(metrics)
-
-                    val params = WindowManager.LayoutParams(
-                        WindowManager.LayoutParams.MATCH_PARENT,
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-                        PixelFormat.TRANSLUCENT
-                    ).apply {
-                        gravity = Gravity.TOP
-                        y = 100
-                        horizontalMargin = 0.05f
-                        width = (context.resources.displayMetrics.widthPixels * 0.9).toInt()
-                    }
-
-                    wm.addView(view, params)
-                    overlayView = view
-                    Handler(Looper.getMainLooper()).postDelayed({ stop(context) }, 15000)
-                } catch (e: Exception) {
-                    KmCertoLogger.log("ERRO OVERLAY: ${e.message}")
-                }
+          val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(ctx, 20), dp(ctx, 18), dp(ctx, 20), dp(ctx, 18))
+            background = GradientDrawable().apply {
+              setColor(Color.parseColor("#CC000000"))
+              cornerRadius = dp(ctx, 24).toFloat()
             }
-        }
+          }
 
-        fun stop(context: Context) {
-            Handler(Looper.getMainLooper()).post {
-                try {
-                    val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                    overlayView?.let {
-                        wm.removeView(it)
-                        overlayView = null
-                    }
-                } catch (_: Exception) {}
+          // Status badge
+          container.addView(TextView(ctx).apply {
+            text = data.status
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(ctx, 14), dp(ctx, 8), dp(ctx, 14), dp(ctx, 8))
+            background = GradientDrawable().apply {
+              setColor(Color.parseColor(data.statusColor))
+              cornerRadius = dp(ctx, 999).toFloat()
             }
-        }
+          })
+
+          container.addView(space(ctx, 10))
+
+          // Valor
+          container.addView(TextView(ctx).apply {
+            text = data.totalFareLabel
+            setTextColor(Color.WHITE)
+            textSize = 32f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER_HORIZONTAL
+          })
+
+          // Km total
+          data.distanceKm?.let {
+            container.addView(TextView(ctx).apply {
+              text = String.format(Locale("pt", "BR"), "%.2f km", it)
+              setTextColor(Color.parseColor("#CFCFD4"))
+              textSize = 15f
+              gravity = Gravity.CENTER_HORIZONTAL
+            })
+          }
+
+          // Source app
+          container.addView(TextView(ctx).apply {
+            text = data.sourceApp
+            setTextColor(Color.parseColor("#CFCFD4"))
+            textSize = 12f
+            gravity = Gravity.CENTER_HORIZONTAL
+          })
+
+          container.addView(space(ctx, 14))
+
+          // Métricas
+          val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+          }
+          row.addView(metric(ctx, "R$/km", data.perKm))
+          data.perHour?.let { row.addView(metric(ctx, "R$/hr", it)) }
+          data.perMinute?.let { row.addView(metric(ctx, "R$/min", it)) }
+          container.addView(row)
+
+          val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+          ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = dp(ctx, 72) }
+
+          wm.addView(container, params)
+          overlayView = container
+          Handler(Looper.getMainLooper()).postDelayed({ stop(ctx) }, 8000)
+        } catch (_: Throwable) {}
+      }
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
-}
+    fun stop(ctx: Context) {
+      Handler(Looper.getMainLooper()).post {
+        try {
+          val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+          overlayView?.let { wm.removeView(it) }
+          overlayView = null
+        } catch (_: Throwable) {}
+      }
+    }
 
-class KmCertoFloatingBubbleService : Service() {
-    override fun onBind(intent: Intent?): IBinder? = null
+    private fun dp(ctx: Context, v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
+    private fun space(ctx: Context, h: Int) = TextView(ctx).apply { minimumHeight = dp(ctx, h) }
+    private fun metric(ctx: Context, label: String, value: Double) = LinearLayout(ctx).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+      setPadding(dp(ctx, 10), 0, dp(ctx, 10), 0)
+      addView(TextView(ctx).apply {
+        text = String.format(Locale("pt", "BR"), "%.2f", value)
+        setTextColor(Color.WHITE); textSize = 18f; setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_HORIZONTAL
+      })
+      addView(TextView(ctx).apply {
+        text = label; setTextColor(Color.parseColor("#CFCFD4")); textSize = 11f; gravity = Gravity.CENTER_HORIZONTAL
+      })
+    }
+  }
+
+  override fun onBind(intent: Intent?) = null as IBinder?
 }
