@@ -4,29 +4,27 @@ const path = require("path");
 
 const withKmCertoManifest = (config) => {
   return withAndroidManifest(config, async (cfg) => {
-    let androidManifest = cfg.modResults.manifest;
+    const androidManifest = cfg.modResults.manifest;
     const mainApplication = androidManifest.application[0];
 
-    // Adicionar permissões necessárias
+    // Permissões necessárias
     const permissions = [
       "android.permission.SYSTEM_ALERT_WINDOW",
       "android.permission.FOREGROUND_SERVICE",
       "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
-      "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
       "android.permission.WAKE_LOCK",
       "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
       "android.permission.RECEIVE_BOOT_COMPLETED",
     ];
 
     if (!androidManifest["uses-permission"]) androidManifest["uses-permission"] = [];
-    
     permissions.forEach((perm) => {
       if (!androidManifest["uses-permission"].find((p) => p.$["android:name"] === perm)) {
         androidManifest["uses-permission"].push({ $: { "android:name": perm } });
       }
     });
 
-    // Limpar serviços KmCerto antigos para evitar duplicidade
+    // Remove serviços KmCerto antigos para evitar duplicata
     if (mainApplication.service) {
       mainApplication.service = mainApplication.service.filter(
         (s) => s.$ && s.$["android:name"] && !s.$["android:name"].includes("KmCerto")
@@ -35,137 +33,73 @@ const withKmCertoManifest = (config) => {
       mainApplication.service = [];
     }
 
-    // 1. Serviço de Acessibilidade (specialUse)
+    // 1. NotificationListenerService — lê notificações da 99 e Uber
     mainApplication.service.push({
       $: {
-        "android:name": "expo.modules.kmcertonative.KmCertoAccessibilityService",
-        "android:permission": "android.permission.BIND_ACCESSIBILITY_SERVICE",
+        "android:name": "expo.modules.kmcertonative.KmCertoNotificationService",
         "android:exported": "true",
-        "android:label": "KmCerto",
-        "android:foregroundServiceType": "specialUse",
+        "android:label": "KmCerto Notificações",
+        "android:permission": "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
       },
-      "intent-filter": [
-        {
-          action: [{ $: { "android:name": "android.accessibilityservice.AccessibilityService" } }],
-        },
-      ],
-      "meta-data": [
-        {
-          $: {
-            "android:name": "android.accessibilityservice",
-            "android:resource": "@xml/kmcerto_accessibility_service_config",
-          },
-        },
-      ],
-      property: [
-        {
-          $: {
-            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
-            "android:value": "accessibility_monitoring",
-          },
-        },
-      ],
+      "intent-filter": [{ action: [{ $: { "android:name": "android.service.notification.NotificationListenerService" } }] }],
     });
 
-    // 2. Serviço DEDICADO para Captura de Tela (mediaProjection)
-    mainApplication.service.push({
-      $: {
-        "android:name": "expo.modules.kmcertonative.KmCertoScreenCaptureService",
-        "android:exported": "false",
-        "android:foregroundServiceType": "mediaProjection",
-      },
-    });
-
-    // 3. Overlay Service (specialUse)
+    // 2. Overlay Service
     mainApplication.service.push({
       $: {
         "android:name": "expo.modules.kmcertonative.KmCertoOverlayService",
         "android:exported": "false",
         "android:foregroundServiceType": "specialUse",
       },
-      property: [
-        {
-          $: {
-            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
-            "android:value": "overlay",
-          },
-        },
-      ],
+      property: [{ $: { "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE", "android:value": "overlay" } }],
     });
 
-    // 4. Floating Bubble Service (specialUse)
+    // 3. Accessibility Service
     mainApplication.service.push({
       $: {
-        "android:name": "expo.modules.kmcertonative.KmCertoFloatingBubbleService",
-        "android:exported": "false",
+        "android:name": "expo.modules.kmcertonative.KmCertoAccessibilityService",
+        "android:exported": "true",
+        "android:label": "KmCerto",
+        "android:permission": "android.permission.BIND_ACCESSIBILITY_SERVICE",
         "android:foregroundServiceType": "specialUse",
       },
-      property: [
-        {
-          $: {
-            "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE",
-            "android:value": "floating_indicator",
-          },
-        },
-      ],
+      "intent-filter": [{ action: [{ $: { "android:name": "android.accessibilityservice.AccessibilityService" } }] }],
+      "meta-data": [{ $: { "android:name": "android.accessibilityservice", "android:resource": "@xml/kmcerto_accessibility_service_config" } }],
+      property: [{ $: { "android:name": "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE", "android:value": "accessibility_monitoring" } }],
     });
-
-    // Adicionar KmCertoPermissionActivity
-    if (!mainApplication.activity) mainApplication.activity = [];
-    const hasPermActivity = mainApplication.activity.some(
-      (a) => a.$ && a.$["android:name"] === "expo.modules.kmcertonative.KmCertoPermissionActivity"
-    );
-    if (!hasPermActivity) {
-      mainApplication.activity.push({
-        $: {
-          "android:name": "expo.modules.kmcertonative.KmCertoPermissionActivity",
-          "android:exported": "false",
-          "android:theme": "@android:style/Theme.Translucent.NoTitleBar",
-        },
-      });
-    }
 
     return cfg;
   });
 };
 
 const withKmCertoResources = (config) => {
-  return withDangerousMod(config, [
-    "android",
-    async (cfg) => {
-      const projectRoot = cfg.modRequest.projectRoot;
-      const resDir = path.join(projectRoot, "android/app/src/main/res");
+  return withDangerousMod(config, ["android", async (cfg) => {
+    const resDir = path.join(cfg.modRequest.projectRoot, "android/app/src/main/res");
+    const xmlDir = path.join(resDir, "xml");
+    if (!fs.existsSync(xmlDir)) fs.mkdirSync(xmlDir, { recursive: true });
 
-      const xmlDir = path.join(resDir, "xml");
-      if (!fs.existsSync(xmlDir)) fs.mkdirSync(xmlDir, { recursive: true });
-
-      const accessibilityConfig = `<?xml version="1.0" encoding="utf-8"?>
+    fs.writeFileSync(path.join(xmlDir, "kmcerto_accessibility_service_config.xml"),
+      `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
-    android:notificationTimeout="150"
-    android:description="@string/kmcerto_accessibility_description" />`;
+    android:notificationTimeout="50"
+    android:description="@string/kmcerto_accessibility_description" />`
+    );
 
-      fs.writeFileSync(path.join(xmlDir, "kmcerto_accessibility_service_config.xml"), accessibilityConfig);
-
-      const valuesDir = path.join(resDir, "values");
-      if (!fs.existsSync(valuesDir)) fs.mkdirSync(valuesDir, { recursive: true });
-
-      const stringsPath = path.join(valuesDir, "kmcerto_strings.xml");
-      const stringsContent = `<?xml version="1.0" encoding="utf-8"?>
+    const valuesDir = path.join(resDir, "values");
+    if (!fs.existsSync(valuesDir)) fs.mkdirSync(valuesDir, { recursive: true });
+    fs.writeFileSync(path.join(valuesDir, "kmcerto_strings.xml"),
+      `<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="kmcerto_accessibility_description">O KmCerto usa acessibilidade para ler as ofertas de corridas e calcular o valor por KM automaticamente.</string>
-</resources>`;
+    <string name="kmcerto_accessibility_description">O KmCerto lê as ofertas de corridas automaticamente para calcular o valor por km.</string>
+</resources>`
+    );
 
-      fs.writeFileSync(stringsPath, stringsContent);
-
-      return cfg;
-    },
-  ]);
+    return cfg;
+  }]);
 };
 
-module.exports = (config) => {
-  return withPlugins(config, [withKmCertoManifest, withKmCertoResources]);
-};
+module.exports = (config) => withPlugins(config, [withKmCertoManifest, withKmCertoResources]);
