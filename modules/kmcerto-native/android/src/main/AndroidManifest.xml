@@ -4,23 +4,21 @@
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
   <application>
 
-    <activity
-      android:name="expo.modules.kmcertonative.KmCertoPermissionActivity"
-      android:exported="false"
-      android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-
-    <!-- Serviço DEDICADO para captura de tela (mediaProjection) -->
     <service
-      android:name="expo.modules.kmcertonative.KmCertoScreenCaptureService"
-      android:exported="false"
-      android:foregroundServiceType="mediaProjection" />
+      android:name="expo.modules.kmcertonative.KmCertoNotificationService"
+      android:exported="true"
+      android:label="KmCerto Notificações"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
 
     <service
       android:name="expo.modules.kmcertonative.KmCertoOverlayService"
@@ -29,15 +27,6 @@
       <property
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="overlay" />
-    </service>
-
-    <service
-      android:name="expo.modules.kmcertonative.KmCertoFloatingBubbleService"
-      android:exported="false"
-      android:foregroundServiceType="specialUse">
-      <property
-        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-        android:value="floating_indicator" />
     </service>
 
     <service
